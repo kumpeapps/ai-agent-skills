@@ -244,6 +244,7 @@ Skills also embed shorter **prompt-like workflows** you can paste directly.
 | `devcontainer-venv` | Dev Containers, venv setup |
 | `dependency-versions` | Upgrades, pins, newest stable policy |
 | `code-review` | PR/diff review against all standards |
+| `kumpeapps-deploy` | Onboard app repos to KumpeApps Deployment Bot (`.kumpeapps-deploy-bot`, secrets sync) |
 
 ---
 
@@ -259,6 +260,7 @@ Skills also embed shorter **prompt-like workflows** you can paste directly.
 | `prompts/add-oidc-auth.md` | KumpeCloud Auth / OIDC integration |
 | `prompts/code-review.md` | Standards-based review |
 | `prompts/bump-dependencies.md` | Dependency/image upgrades |
+| `prompts/setup-kumpeapps-deploy.md` | Wire a repo to KumpeApps Deployment Bot |
 
 ---
 
