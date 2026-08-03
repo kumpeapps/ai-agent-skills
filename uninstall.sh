@@ -65,6 +65,25 @@ else
   CONSUMER_ROOT="$(cd "$CONSUMER_ROOT" && pwd)"
 fi
 
+abspath_simple() {
+  local path="$1"
+  local dir base
+  dir="$(cd "$(dirname "$path")" && pwd)"
+  base="$(basename "$path")"
+  echo "$dir/$base"
+}
+
+resolve_link_abs() {
+  local link="$1"
+  local t
+  t="$(readlink "$link")"
+  if [[ "$t" == /* ]]; then
+    abspath_simple "$t"
+  else
+    abspath_simple "$(dirname "$link")/$t"
+  fi
+}
+
 remove_managed_links() {
   local dest_dir="$1"
   local src_prefix="$2"
@@ -76,9 +95,9 @@ remove_managed_links() {
   shopt -s nullglob
   for item in "$dest_dir"/*; do
     if [[ -L "$item" ]]; then
-      local resolved
-      resolved="$(readlink "$item")"
-      case "$resolved" in
+      local abs
+      abs="$(resolve_link_abs "$item" 2>/dev/null || true)"
+      case "$abs" in
         "$src_prefix"*)
           rm -f "$item"
           echo "removed $kind link: $(basename "$item")"
@@ -96,9 +115,10 @@ remove_symlink_if_managed() {
   local expected_src="$2"
   local label="$3"
   if [[ -L "$dest" ]]; then
-    local resolved
-    resolved="$(readlink "$dest")"
-    if [[ "$resolved" == "$expected_src" ]]; then
+    local abs expected_abs
+    abs="$(resolve_link_abs "$dest" 2>/dev/null || true)"
+    expected_abs="$(abspath_simple "$expected_src")"
+    if [[ "$abs" == "$expected_abs" ]]; then
       rm -f "$dest"
       echo "removed $label"
     fi

@@ -73,7 +73,20 @@ git submodule update --init --recursive
 .ai-agent-skills/install.sh --list-targets
 ```
 
-Install is **idempotent**. Local non-symlink files are never overwritten (project overrides win).
+Install is **idempotent** and safe to re-run. It:
+
+- Links new skills/rules added to the submodule
+- Refreshes stale links
+- Converts old **absolute** symlinks (e.g. `/Users/...`) to **relative** ones (portable across machines)
+
+Local non-symlink files are never overwritten (project overrides win).
+
+### Updating skills in a consumer repo
+
+```bash
+git submodule update --remote --merge .ai-agent-skills   # or pin to a tag/SHA
+.ai-agent-skills/install.sh                              # refresh / heal links
+```
 
 ### 3. What each target installs
 
@@ -95,14 +108,18 @@ Reload the IDE window or restart the CLI agent so skills and instructions are di
 
 ### 5. Commit consumer wiring
 
+Commit the **submodule** and shared contract files. Prefer **not** committing IDE symlink trees (`.cursor/`, `.claude/skills`, etc.)—especially in repos used as **GitHub Actions**. Absolute or dangling symlinks break Actions checkout. Teammates should run `install.sh` after clone.
+
 ```bash
-git add .gitmodules .ai-agent-skills
-git add AGENTS.md CLAUDE.md GEMINI.md CONVENTIONS.md .windsurfrules \
-  .cursor .claude .github .agents .windsurf 2>/dev/null || true
-git commit -m "Add ai-agent-skills submodule and multi-agent wiring"
+git add .gitmodules .ai-agent-skills AGENTS.md
+# Optional generated wrappers (not symlinks):
+git add CLAUDE.md GEMINI.md CONVENTIONS.md .windsurfrules \
+  .github/instructions .github/copilot-instructions.md 2>/dev/null || true
+# Avoid: git add .cursor   # local IDE links only
+git commit -m "Add ai-agent-skills submodule and agent contract"
 ```
 
-> **Note:** Git stores symlinks as symlinks. Generated files (`CLAUDE.md`, Copilot `*.instructions.md`) are marked with `generated-by: ai-agent-skills` so uninstall can remove them safely. Teammates need `git submodule update --init` after clone, then may re-run `install.sh` if links are missing.
+> **Note:** `install.sh` creates **relative** symlinks. Generated files (`CLAUDE.md`, Copilot `*.instructions.md`) are marked with `generated-by: ai-agent-skills` so uninstall can remove them safely. After clone: `git submodule update --init` then `.ai-agent-skills/install.sh`.
 
 ### Clone an existing consumer that already uses the submodule
 
@@ -124,11 +141,11 @@ Prefer `install.sh` for multi-tool setups. For **Cursor-only** manual wiring:
 mkdir -p .cursor/skills .cursor/rules
 
 for d in .ai-agent-skills/skills/*; do
-  ln -s "$(pwd)/$d" ".cursor/skills/$(basename "$d")"
+  ln -s "../.ai-agent-skills/skills/$(basename "$d")" ".cursor/skills/$(basename "$d")"
 done
 
 for f in .ai-agent-skills/rules/*; do
-  ln -s "$(pwd)/$f" ".cursor/rules/$(basename "$f")"
+  ln -s "../.ai-agent-skills/rules/$(basename "$f")" ".cursor/rules/$(basename "$f")"
 done
 
 ln -s "$(pwd)/.ai-agent-skills/AGENTS.md" AGENTS.md

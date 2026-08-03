@@ -103,28 +103,84 @@ AGENTS_SRC="$SKILLS_REPO/AGENTS.md"
 
 # --- helpers ---
 
+# Absolute path of a file/dir (last component may not exist yet for dest links).
+abspath() {
+  local path="$1"
+  local dir base
+  dir="$(cd "$(dirname "$path")" && pwd)"
+  base="$(basename "$path")"
+  echo "$dir/$base"
+}
+
+# Path of $1 relative to directory $2 (portable; prefers python3).
+relpath_to() {
+  local target="$1"
+  local start_dir="$2"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' \
+      "$(abspath "$target")" "$(cd "$start_dir" && pwd)"
+    return
+  fi
+  # Fallback: GNU realpath
+  if realpath --relative-to="$start_dir" "$target" >/dev/null 2>&1; then
+    realpath --relative-to="$start_dir" "$target"
+    return
+  fi
+  echo "error: need python3 or GNU realpath to create relative symlinks" >&2
+  exit 1
+}
+
+# True if symlink target string is absolute (starts with /).
+is_absolute_link_target() {
+  local t="$1"
+  [[ "$t" == /* ]]
+}
+
+# Resolve a symlink's target to an absolute path (relative targets resolved from link's dir).
+resolve_link_abs() {
+  local link="$1"
+  local t
+  t="$(readlink "$link")"
+  if [[ "$t" == /* ]]; then
+    abspath "$t"
+  else
+    abspath "$(dirname "$link")/$t"
+  fi
+}
+
 link_path() {
   # link_path <source> <dest> <label>
+  # Always uses a relative symlink. Re-running replaces absolute or stale links.
   local src="$1"
   local dest="$2"
   local label="${3:-link}"
-  local dest_dir
+  local dest_dir desired_rel existing existing_abs desired_abs
   dest_dir="$(dirname "$dest")"
   mkdir -p "$dest_dir"
+  desired_rel="$(relpath_to "$src" "$dest_dir")"
+  desired_abs="$(abspath "$src")"
+
   if [[ -L "$dest" ]]; then
-    local existing
     existing="$(readlink "$dest")"
-    if [[ "$existing" == "$src" ]]; then
-      echo "ok: $label already linked"
-      return 0
+    existing_abs="$(resolve_link_abs "$dest" 2>/dev/null || true)"
+    if [[ "$existing" == "$desired_rel" ]] || [[ "$existing_abs" == "$desired_abs" ]]; then
+      if is_absolute_link_target "$existing"; then
+        echo "refresh: $label was absolute → relative ($desired_rel)"
+        rm -f "$dest"
+      else
+        echo "ok: $label already linked"
+        return 0
+      fi
+    else
+      echo "refresh: $label target changed"
+      rm -f "$dest"
     fi
-    rm -f "$dest"
   elif [[ -e "$dest" ]]; then
     echo "skip: $dest exists and is not a symlink (local override preserved)"
     return 1
   fi
-  ln -s "$src" "$dest"
-  echo "linked $label: $dest"
+  ln -s "$desired_rel" "$dest"
+  echo "linked $label: $dest → $desired_rel"
   return 0
 }
 
@@ -133,28 +189,46 @@ link_children() {
   local dest_dir="$2"
   local kind="$3"
   local count=0
+  local refreshed=0
   local skipped=0
   mkdir -p "$dest_dir"
   shopt -s nullglob
   for item in "$src_dir"/*; do
-    local name
+    local name target desired_rel desired_abs existing existing_abs
     name="$(basename "$item")"
-    local target="$dest_dir/$name"
-    if [[ -e "$target" || -L "$target" ]]; then
-      if [[ -L "$target" ]]; then
-        rm -f "$target"
-      else
-        echo "skip: $target exists and is not a symlink (local override preserved)"
-        skipped=$((skipped + 1))
+    target="$dest_dir/$name"
+    desired_rel="$(relpath_to "$item" "$dest_dir")"
+    desired_abs="$(abspath "$item")"
+
+    if [[ -L "$target" ]]; then
+      existing="$(readlink "$target")"
+      existing_abs="$(resolve_link_abs "$target" 2>/dev/null || true)"
+      if [[ "$existing" == "$desired_rel" ]] || [[ "$existing_abs" == "$desired_abs" ]]; then
+        if is_absolute_link_target "$existing"; then
+          rm -f "$target"
+          ln -s "$desired_rel" "$target"
+          echo "refresh $kind: $name (absolute → relative)"
+          refreshed=$((refreshed + 1))
+        else
+          echo "ok: $kind $name already linked"
+        fi
+        count=$((count + 1))
         continue
       fi
+      rm -f "$target"
+      echo "refresh $kind: $name (stale target)"
+      refreshed=$((refreshed + 1))
+    elif [[ -e "$target" ]]; then
+      echo "skip: $target exists and is not a symlink (local override preserved)"
+      skipped=$((skipped + 1))
+      continue
     fi
-    ln -s "$item" "$target"
-    echo "linked $kind: $name → $dest_dir/"
+    ln -s "$desired_rel" "$target"
+    echo "linked $kind: $name → $desired_rel"
     count=$((count + 1))
   done
   shopt -u nullglob
-  echo "  → $count $kind(s) linked into $dest_dir ($skipped override(s) kept)"
+  echo "  → $count $kind(s) in $dest_dir ($refreshed refreshed, $skipped override(s) kept)"
 }
 
 ensure_agents_md() {
@@ -300,7 +374,7 @@ install_copilot() {
           continue
         fi
       fi
-      ln -s "$p" "$target"
+      ln -s "$(relpath_to "$p" "$prompts_dest")" "$target"
       echo "linked prompt: ${base}.prompt.md"
       count=$((count + 1))
     done
@@ -390,4 +464,10 @@ done
 echo "Install complete for:$TARGET_LIST"
 echo "Reload / restart your IDE or agent so configuration is picked up."
 echo "Shared prompts also live at: $PROMPTS_SRC"
+echo
+echo "Re-run anytime to add new skills/rules or convert absolute links to relative:"
+echo "  git submodule update --init --recursive"
+echo "  .ai-agent-skills/install.sh"
 echo "Tip: .ai-agent-skills/install.sh --list-targets"
+echo "Note: keep .cursor/ (and other IDE link dirs) out of git for Action/CI repos —"
+echo "      symlinks are for local IDE use; committing them can break GitHub Actions."
